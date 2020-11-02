@@ -37,6 +37,14 @@ const (
 	RedisStreams = "redisstreams"
 )
 
+var customTypes = make(map[string]func(config types.MessageBusConfig) (MessageClient, error))
+
+// RegisterCustomType allows registering custom messagebus client types for use by NewMessageClient
+func RegisterCustomType(msgType string, builder func(config types.MessageBusConfig) (MessageClient, error)) {
+	lowerType := strings.ToLower(msgType)
+	customTypes[lowerType] = builder
+}
+
 // NewMessageClient is a factory function to instantiate different message client depending on
 // the "Type" from the configuration
 func NewMessageClient(msgConfig types.MessageBusConfig) (MessageClient, error) {
@@ -53,6 +61,11 @@ func NewMessageClient(msgConfig types.MessageBusConfig) (MessageClient, error) {
 	case RedisStreams:
 		return streams.NewClient(msgConfig)
 	default:
+		for t, b := range customTypes {
+			if lowerMsgType == t {
+				return b(msgConfig)
+			}
+		}
 		return nil, fmt.Errorf("unknown message type '%s' requested", msgConfig.Type)
 	}
 }
