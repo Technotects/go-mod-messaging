@@ -17,6 +17,8 @@
 package messaging
 
 import (
+	"github.com/edgexfoundry/go-mod-messaging/internal/pkg/zeromq"
+	"strings"
 	"testing"
 
 	"github.com/edgexfoundry/go-mod-messaging/pkg/types"
@@ -57,6 +59,23 @@ func TestNewMessageClientMQTT(t *testing.T) {
 	}
 
 	_, err := NewMessageClient(messageBusConfig)
+
+	if assert.NoError(t, err, "New Message client failed: ", err) == false {
+		t.Fatal()
+	}
+}
+
+func TestNewMessageClientCustomType(t *testing.T) {
+
+	customType := "CuStOMtYPE"
+
+	RegisterCustomType(customType, func(cfg types.MessageBusConfig) (MessageClient, error) {
+		return zeromq.NewZeroMqClient(cfg)
+	})
+
+	msgConfig.Type = strings.ToUpper(customType)
+
+	_, err := NewMessageClient(msgConfig)
 
 	if assert.NoError(t, err, "New Message client failed: ", err) == false {
 		t.Fatal()
