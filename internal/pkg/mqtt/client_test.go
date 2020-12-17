@@ -416,7 +416,7 @@ func TestClientCreatorTLS(t *testing.T) {
 				},
 				json.Marshal,
 				json.Unmarshal,
-				ClientCreatorWithCertLoader(test.certCreator, test.certLoader))
+				ClientCreatorWithCertLoader(nil, test.certCreator, test.certLoader))
 
 			if test.expectError {
 				require.Error(t, err)
@@ -441,7 +441,7 @@ func TestClientCreatorTlsLoader(t *testing.T) {
 		TestMessageBusConfigTlsLoad,
 		json.Marshal,
 		json.Unmarshal,
-		ClientCreatorWithCertLoader(mockCertCreator(nil), mockCertLoader(nil)))
+		ClientCreatorWithCertLoader(nil, mockCertCreator(nil), mockCertLoader(nil)))
 
 	require.NoError(t, err)
 	clientOptions := client.wrappedClient.OptionsReader()
@@ -454,7 +454,7 @@ func TestClientCreatorTlsLoadError(t *testing.T) {
 		TestMessageBusConfigTlsLoad,
 		json.Marshal,
 		json.Unmarshal,
-		ClientCreatorWithCertLoader(mockCertCreator(nil), mockCertLoader(errors.New("test error"))))
+		ClientCreatorWithCertLoader(nil, mockCertCreator(nil), mockCertLoader(errors.New("test error"))))
 
 	assert.Error(t, err, "Expected error for invalid CertFile and KeyFile file locations")
 }
@@ -464,7 +464,7 @@ func TestClientCreatorTlsCreator(t *testing.T) {
 		TestMessageBusConfigTlsCreate,
 		json.Marshal,
 		json.Unmarshal,
-		ClientCreatorWithCertLoader(mockCertCreator(nil), mockCertLoader(nil)))
+		ClientCreatorWithCertLoader(nil, mockCertCreator(nil), mockCertLoader(nil)))
 
 	require.NoError(t, err)
 	clientOptions := client.wrappedClient.OptionsReader()
@@ -477,7 +477,7 @@ func TestClientCreatorTlsCreatorError(t *testing.T) {
 		TestMessageBusConfigTlsCreate,
 		json.Marshal,
 		json.Unmarshal,
-		ClientCreatorWithCertLoader(mockCertCreator(errors.New("test error")), mockCertLoader(nil)))
+		ClientCreatorWithCertLoader(nil, mockCertCreator(errors.New("test error")), mockCertLoader(nil)))
 
 	assert.Error(t, err, "Expected error for invalid CertFile and KeyFile file locations")
 }
@@ -489,7 +489,7 @@ func TestInvalidClientOptionsWithCreator(t *testing.T) {
 		Protocol: "    ",
 	}}
 
-	_, err := NewMQTTClientWithCreator(invalidOptions, json.Marshal, json.Unmarshal, DefaultClientCreator())
+	_, err := NewMQTTClientWithCreator(invalidOptions, json.Marshal, json.Unmarshal, DefaultClientCreator(nil))
 	require.Error(t, err)
 }
 
@@ -805,6 +805,26 @@ func TestSubscriptionMessageHandlerError(t *testing.T) {
 	}, "test2")
 	require.NoError(t, err)
 	wg.Wait()
+}
+
+func TestOnConnectResumesSubscriptions(t *testing.T) {
+	subscriptions := []subscription{
+		{channels: []types.TopicChannel{{Topic: "t1"}}, errs: make(chan error)},
+		{channels: []types.TopicChannel{{Topic: "t2"}, {Topic: "t3"}}, errs: make(chan error)},
+	}
+
+	wc, err := mockClientCreator(MockToken{}, MockToken{}, SuccessfulMockToken())(types.MessageBusConfig{})
+
+	require.NoError(t, err)
+
+	sut := Client{
+		subscriptions: subscriptions,
+		wrappedClient: wc,
+	}
+
+	sut.onConnectHandler(nil) //param not used
+
+	require.Equal(t, 3, len(wc.(MockMQTTClient).subscriptions))
 }
 
 // mockMarshalerError returns an error when marshaling is attempted.

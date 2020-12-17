@@ -34,26 +34,39 @@ type MessageMarshaler func(v interface{}) ([]byte, error)
 // MessageUnmarshaler defines the function signature for unmarshaling []byte into structs.
 type MessageUnmarshaler func(data []byte, v interface{}) error
 
+type subscription struct {
+	channels []types.TopicChannel
+	errs     chan error
+}
+
 // Client facilitates communication to an MQTT server and provides functionality needed to send and receive MQTT
 // messages.
 type Client struct {
 	wrappedClient mqtt.Client
 	marshaler     MessageMarshaler
 	unmarshaler   MessageUnmarshaler
+	subscriptions []subscription
 }
 
 // NewMQTTClient constructs a new MQTT client based on the options provided.
 func NewMQTTClient(options types.MessageBusConfig) (Client, error) {
-	mqttClient, err := DefaultClientCreator()(options)
+	//create outer client first so we can bind its onConnectHandler to the underlying paho client
+	c := Client{
+		subscriptions: make([]subscription, 0),
+		marshaler:     json.Marshal,
+		unmarshaler:   json.Unmarshal,
+	}
+
+	//pass ref to c instead of making a method on Client?
+	mqttClient, err := DefaultClientCreator(c.onConnectHandler)(options)
+
 	if err != nil {
 		return Client{}, err
 	}
 
-	return Client{
-		wrappedClient: mqttClient,
-		marshaler:     json.Marshal,
-		unmarshaler:   json.Unmarshal,
-	}, nil
+	c.wrappedClient = mqttClient
+
+	return c, nil
 }
 
 // NewMQTTClientWithCreator constructs a new MQTT client based on the options and ClientCreator provided.
@@ -69,6 +82,7 @@ func NewMQTTClientWithCreator(
 	}
 
 	return Client{
+		subscriptions: make([]subscription, 0),
 		wrappedClient: wrappedClient,
 		marshaler:     marshaler,
 		unmarshaler:   unmarshaler,
@@ -114,6 +128,16 @@ func (mc Client) Publish(message types.MessageEnvelope, topic string) error {
 
 // Subscribe creates a subscription for the specified topics.
 func (mc Client) Subscribe(topics []types.TopicChannel, messageErrors chan error) error {
+	mc.subscriptions = append(mc.subscriptions, subscription{
+		channels: topics,
+		errs:     messageErrors,
+	})
+
+	return mc.subscribe(topics, messageErrors)
+}
+
+// subscribe provides an internal implementation of subscribe WITHOUT cataloging subscriptions that can be called on reconnect
+func (mc Client) subscribe(topics []types.TopicChannel, messageErrors chan error) error {
 	optionsReader := mc.wrappedClient.OptionsReader()
 
 	for _, topic := range topics {
@@ -145,7 +169,8 @@ func (mc Client) Disconnect() error {
 }
 
 // DefaultClientCreator returns a default function for creating MQTT clients.
-func DefaultClientCreator() ClientCreator {
+// onConnectHandler is a function to bind to the underlying paho client for execution on connection and most importantly reconnection.
+func DefaultClientCreator(onConnectHandler func(mqtt.Client)) ClientCreator {
 	return func(options types.MessageBusConfig) (mqtt.Client, error) {
 		clientConfiguration, err := CreateMQTTClientConfiguration(options)
 		if err != nil {
@@ -157,13 +182,17 @@ func DefaultClientCreator() ClientCreator {
 			return nil, err
 		}
 
+		if onConnectHandler != nil {
+			clientOptions.OnConnect = onConnectHandler
+		}
+
 		return mqtt.NewClient(clientOptions), nil
 	}
 }
 
 // ClientCreatorWithCertLoader creates a ClientCreator which leverages the specified cert creator and loader when
-// creating an MQTT client.
-func ClientCreatorWithCertLoader(certCreator pkg.X509KeyPairCreator, certLoader pkg.X509KeyLoader) ClientCreator {
+// creating an MQTT client. onConnectHandler is a function to bind to the underlying paho client for execution on connection and most importantly reconnection.
+func ClientCreatorWithCertLoader(onConnectHandler func(mqtt.Client), certCreator pkg.X509KeyPairCreator, certLoader pkg.X509KeyLoader) ClientCreator {
 	return func(options types.MessageBusConfig) (mqtt.Client, error) {
 		clientConfiguration, err := CreateMQTTClientConfiguration(options)
 		if err != nil {
@@ -175,7 +204,21 @@ func ClientCreatorWithCertLoader(certCreator pkg.X509KeyPairCreator, certLoader 
 			return nil, err
 		}
 
+		if onConnectHandler != nil {
+			clientOptions.OnConnect = onConnectHandler
+		}
+
 		return mqtt.NewClient(clientOptions), nil
+	}
+}
+
+// OnConnectHandler attempts to re-establish subscriptions on reconnection
+func (mc Client) onConnectHandler(mqtt.Client) {
+	for _, sub := range mc.subscriptions {
+		err := mc.subscribe(sub.channels, sub.errs)
+		if err != nil {
+			panic(err) //get a logger in here
+		}
 	}
 }
 
