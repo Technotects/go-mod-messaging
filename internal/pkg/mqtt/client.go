@@ -17,6 +17,8 @@ package mqtt
 import (
 	"crypto/tls"
 	"encoding/json"
+	"log"
+	"os"
 	"time"
 
 	"github.com/edgexfoundry/go-mod-messaging/internal/pkg"
@@ -57,7 +59,6 @@ func NewMQTTClient(options types.MessageBusConfig) (Client, error) {
 		unmarshaler:   json.Unmarshal,
 	}
 
-	//pass ref to c instead of making a method on Client?
 	mqttClient, err := DefaultClientCreator(c.onConnectHandler)(options)
 
 	if err != nil {
@@ -214,10 +215,15 @@ func ClientCreatorWithCertLoader(onConnectHandler func(mqtt.Client), certCreator
 
 // OnConnectHandler attempts to re-establish subscriptions on reconnection
 func (mc Client) onConnectHandler(mqtt.Client) {
+	lgr := log.Logger{}
+	lgr.SetOutput(os.Stdout)
+
 	for _, sub := range mc.subscriptions {
+		//how bad do we want this
+		lgr.Printf("RESUBSCRIBING TO %+v ----", sub)
 		err := mc.subscribe(sub.channels, sub.errs)
 		if err != nil {
-			panic(err) //get a logger in here
+			lgr.Panic(err)
 		}
 	}
 }
